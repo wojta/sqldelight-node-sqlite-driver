@@ -19,8 +19,25 @@ import kotlin.coroutines.resumeWithException
 
 private const val OPEN_REQUEST_ID = 0
 private const val NO_REPLY = -1
-private const val ROW_BATCH = 256
 private const val STATEMENT_CACHE_SIZE = 32
+
+/**
+ * Default number of rows transferred per worker message for queries without `LIMIT`.
+ * @since 1.1.1
+ */
+const val DEFAULT_BATCH_SIZE = 2048
+
+private val sqlLiteralOrComment =
+    Regex("""'(?:''|[^'])*'|"(?:""|[^"])*"|`[^`]*`|\[[^\]]*\]|--[^\r\n]*|/\*[\s\S]*?\*/""")
+private val limitClause = Regex("""\sLIMIT\s+(?!-\d)[^)]*$""", RegexOption.IGNORE_CASE)
+
+/**
+ * True when [sql] ends with a top-level `LIMIT` clause (not inside a subquery, CTE, string literal, or comment,
+ * and not `LIMIT -1`).
+ */
+@InternalSQLiteDriverApi
+fun hasTopLevelLimit(sql: String): Boolean =
+    limitClause.containsMatchIn(sql.replace(sqlLiteralOrComment, " "))
 
 /**
  * Opens a connection in its own worker thread. The thread imports [registrarModule], which registers
@@ -30,14 +47,20 @@ private const val STATEMENT_CACHE_SIZE = 32
  * and run or stepped in a single round-trip, and resetting or finalizing it needs no reply at all.
  */
 @InternalSQLiteDriverApi
-suspend fun openWorkerConnection(taskName: String, registrarModule: String, filename: String): SQLiteConnection {
+suspend fun openWorkerConnection(
+    taskName: String,
+    registrarModule: String,
+    filename: String,
+    batchSize: Int = DEFAULT_BATCH_SIZE,
+): SQLiteConnection {
+    require(batchSize > 0) { "batchSize must be positive" }
     val scope = CoroutineScope(SupervisorJob())
     val pool = ThreadPool(count = 1, coroutineScope = scope, registrarModules = listOf(registrarModule))
     pool.start()
     // an idle driver doesn't keep Node.js running, the port is referenced only while a request waits for reply
     pool.unref()
     val channel: dynamic = js("new MessageChannel()")
-    val connection = WorkerSQLiteConnection(channel.port1, pool, scope)
+    val connection = WorkerSQLiteConnection(channel.port1, pool, scope, batchSize)
     try {
         val ticket = pool.transfer(
             taskName, filename, String.serializer(), Unit.serializer(), channel.port2.unsafeCast<Any>(), thread = 0,
@@ -56,23 +79,27 @@ suspend fun openWorkerConnection(taskName: String, registrarModule: String, file
  * @since 1.1.0
  */
 @InternalSQLiteDriverApi
+@Suppress("LongParameterList")
 suspend fun openWorkerDriver(
     taskName: String,
     registrarModule: String,
     filename: String,
     beginImmediate: Boolean,
     readers: Int,
+    batchSize: Int = DEFAULT_BATCH_SIZE,
 ): SQLiteDriver {
     require(readers >= 0) { "readers must not be negative" }
     require(readers == 0 || !filename.isInMemory()) {
         "readers need a database file, in-memory databases are separate per connection"
     }
-    val writer = openWorkerConnection(taskName, registrarModule, filename)
+    val writer = openWorkerConnection(taskName, registrarModule, filename, batchSize)
     val opened = mutableListOf<SQLiteConnection>()
     try {
         if (readers > 0) writer.exec("PRAGMA journal_mode=WAL")
         coroutineScope {
-            repeat(readers) { launch { opened += openWorkerConnection(taskName, registrarModule, filename) } }
+            repeat(readers) {
+                launch { opened += openWorkerConnection(taskName, registrarModule, filename, batchSize) }
+            }
         }
     } catch (@Suppress("TooGenericExceptionCaught") e: Throwable) {
         (opened + writer).forEach { runCatching { it.close() } }
@@ -163,7 +190,8 @@ private class ConnectionServer(private val connection: SQLiteConnection) {
         request.params.unsafeCast<Array<Any?>?>()?.let { statement.bind(it.toList()) }
         return when (op) {
             "run" -> statement.run().toDouble()
-            "step" -> stepBatch(statement)
+            "all" -> batch(statement.all(), done = true)
+            "step" -> stepBatch(statement, request.batch.unsafeCast<Int>())
             else -> throw SQLiteException("Unknown request $op")
         }
     }
@@ -189,10 +217,10 @@ private class ConnectionServer(private val connection: SQLiteConnection) {
         connection.close()
     }
 
-    private suspend fun stepBatch(statement: SQLiteStatement): dynamic {
+    private suspend fun stepBatch(statement: SQLiteStatement, batchSize: Int): dynamic {
         val rows = mutableListOf<Array<dynamic>>()
         var done = false
-        while (rows.size < ROW_BATCH) {
+        while (rows.size < batchSize) {
             val row = statement.step()
             if (row == null) {
                 done = true
@@ -200,8 +228,12 @@ private class ConnectionServer(private val connection: SQLiteConnection) {
             }
             rows.add(row)
         }
+        return batch(rows.toTypedArray(), done)
+    }
+
+    private fun batch(rows: Array<Array<dynamic>>, done: Boolean): dynamic {
         val batch: dynamic = js("({})")
-        batch.rows = rows.toTypedArray()
+        batch.rows = rows
         batch.done = done
         return batch
     }
@@ -211,6 +243,7 @@ private class WorkerSQLiteConnection(
     private val port: dynamic,
     private val pool: ThreadPool,
     private val scope: CoroutineScope,
+    private val batchSize: Int,
 ) : SQLiteConnection {
     private val pending = mutableMapOf<Int, CancellableContinuation<dynamic>>()
     private var nextRequestId = OPEN_REQUEST_ID + 1
@@ -281,7 +314,8 @@ private class WorkerSQLiteConnection(
     }
 
     /** The worker prepares it with the first request that uses it. */
-    override suspend fun prepare(sql: String): SQLiteStatement = WorkerSQLiteStatement(this, nextStatementId++, sql)
+    override suspend fun prepare(sql: String): SQLiteStatement =
+        WorkerSQLiteStatement(this, nextStatementId++, sql, batchSize)
 
     override suspend fun exec(sql: String) {
         request("exec") { it.sql = sql }
@@ -315,21 +349,24 @@ private class WorkerSQLiteConnection(
 }
 
 /**
- * Parameters are sent with the next [run] or [step], rows come in batches of [ROW_BATCH].
+ * Parameters are sent with the next [run] or [step]. Queries with `LIMIT` fetch all rows at once,
+ * others come in batches of [batchSize].
  */
 @OptIn(InternalSQLiteDriverApi::class)
 private class WorkerSQLiteStatement(
     private val connection: WorkerSQLiteConnection,
     private val id: Int,
     private val sql: String,
+    private val batchSize: Int,
 ) : SQLiteStatement {
+    private val fetchAll = hasTopLevelLimit(sql)
     private var prepared = false
     private var sent = false
     private var parameters: Array<Any?>? = null
     private var restart = true
     /** The worker has a row iterator in progress, which blocks other statements in better-sqlite3. */
     private var iterating = false
-    private var rows: Array<dynamic>? = null
+    private var rows: Array<Array<dynamic>>? = null
     private var position = 0
     private var done = false
 
@@ -347,8 +384,8 @@ private class WorkerSQLiteStatement(
 
     override suspend fun step(): Array<dynamic>? {
         if (!hasBufferedRow() && !done) {
-            val batch = request("step")
-            rows = batch.rows.unsafeCast<Array<dynamic>>()
+            val batch = request(if (fetchAll) "all" else "step")
+            rows = batch.rows.unsafeCast<Array<Array<dynamic>>>()
             position = 0
             done = batch.done.unsafeCast<Boolean>()
             iterating = !done
@@ -389,6 +426,7 @@ private class WorkerSQLiteStatement(
             if (!prepared) it.sql = sql
             if (parameters != null) it.params = parameters
             if (restart) it.reset = true
+            if (op == "step") it.batch = batchSize
         }
         prepared = true
         return reply

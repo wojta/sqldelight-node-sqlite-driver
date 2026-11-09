@@ -56,6 +56,16 @@ internal class BetterSqlite3StatementWrapper(private val statement: BetterSqlite
         if (next.done) null else next.value
     }
 
+    override suspend fun all(): Array<Array<dynamic>> = wrapJsErrors {
+        closeRows()
+        if (!statement.reader) {
+            statement.run(*parameters)
+            emptyArray()
+        } else {
+            statement.all(*parameters)
+        }
+    }
+
     override suspend fun reset() = closeRows()
 
     override suspend fun finalize() = closeRows()

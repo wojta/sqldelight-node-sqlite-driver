@@ -185,7 +185,7 @@ abstract class DriverWithLibraryTest {
      */
     @Test
     fun testPartialReadInTransactionDoesNotBlockNextStatements() = withDatabase {
-        val insertedPlayers = (0..299).map { HockeyPlayer(player_number = 1000L + it, full_name = "Busy $it") }
+        val insertedPlayers = (0..2099).map { HockeyPlayer(player_number = 1000L + it, full_name = "Busy $it") }
         transaction {
             insertedPlayers.forEach { playerQueries.insertFullPlayerObject(it) }
             assertEquals(3, playerQueries.selectAll().executeAsFlow().take(3).toList().size)
@@ -204,11 +204,11 @@ abstract class DriverWithLibraryTest {
             }
         }
         val list1 = playerQueries.selectWithLimit(0, 50).awaitAsList()
-        println(list1.size)
+        assertEquals(50, list1.size)
         val list2 = playerQueries.selectWithLimit(50, 99).awaitAsList()
-        println(list2.size)
+        assertEquals(52, list2.size)
         val list3 = playerQueries.selectAll().awaitAsList()
-        println(list3.size)
+        assertEquals(102, list3.size)
     }
 
     private companion object {

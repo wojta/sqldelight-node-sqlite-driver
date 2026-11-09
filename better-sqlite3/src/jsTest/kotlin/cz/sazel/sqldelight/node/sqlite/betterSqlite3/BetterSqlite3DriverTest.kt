@@ -20,6 +20,10 @@ class BetterSqlite3DriverWithLibraryTest : DriverWithLibraryTest() {
 }
 
 class BetterSqlite3ReaderPoolTest : ReaderPoolTest() {
-    override suspend fun createDriver(filename: String, schema: SqlSchema<QueryResult.AsyncValue<Unit>>?, readers: Int) =
-        initBetterSqlite3SqlDriver(filename, schema = schema, readers = readers)
+    override suspend fun createDriver(
+        filename: String,
+        schema: SqlSchema<QueryResult.AsyncValue<Unit>>?,
+        readers: Int,
+        batchSize: Int,
+    ) = initBetterSqlite3SqlDriver(filename, schema = schema, readers = readers, batchSize = batchSize)
 }

@@ -33,6 +33,17 @@ interface SQLiteStatement {
     suspend fun step(): Array<dynamic>?
 
     /**
+     * Fetches all remaining rows at once.
+     */
+    suspend fun all(): Array<Array<dynamic>> {
+        val rows = mutableListOf<Array<dynamic>>()
+        while (true) {
+            rows.add(step() ?: break)
+        }
+        return rows.toTypedArray()
+    }
+
+    /**
      * Rewinds the statement so [step] starts from the first row again.
      */
     suspend fun reset()
@@ -45,7 +56,7 @@ interface SQLiteStatement {
  */
 @RequiresOptIn(level = RequiresOptIn.Level.ERROR)
 @Retention(AnnotationRetention.BINARY)
-@Target(AnnotationTarget.FUNCTION, AnnotationTarget.CLASS)
+@Target(AnnotationTarget.FUNCTION, AnnotationTarget.CLASS, AnnotationTarget.PROPERTY)
 annotation class InternalSQLiteDriverApi
 
 /**
