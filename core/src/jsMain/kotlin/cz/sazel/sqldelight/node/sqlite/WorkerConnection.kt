@@ -216,6 +216,7 @@ private class WorkerSQLiteConnection(
     private var nextRequestId = OPEN_REQUEST_ID + 1
     private var nextStatementId = 0
     private lateinit var ticket: JobTicket<Unit>
+    private var dead = false
 
     init {
         port.on("message") { reply: dynamic ->
@@ -236,6 +237,7 @@ private class WorkerSQLiteConnection(
                 ticket.await()
             } catch (@Suppress("TooGenericExceptionCaught") e: Throwable) {
                 // the worker thread died, nothing pending gets a reply anymore
+                dead = true
                 val waiting = pending.values.toList()
                 pending.clear()
                 port.unref()
@@ -286,9 +288,19 @@ private class WorkerSQLiteConnection(
     }
 
     override suspend fun close() {
-        request("close")
-        ticket.await()
-        shutdown()
+        // close reply unrefs the port before the worker finishes a task, hold the loop until shutdown
+        pool.ref()
+        try {
+            request("close")
+        } catch (@Suppress("TooGenericExceptionCaught") e: Throwable) {
+            if (dead) shutdown() else pool.unref()
+            throw e
+        }
+        try {
+            ticket.await()
+        } finally {
+            shutdown()
+        }
     }
 
     fun shutdown() {

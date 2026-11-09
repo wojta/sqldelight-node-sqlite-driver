@@ -113,4 +113,17 @@ abstract class ReaderPoolTest {
     fun testInMemoryDatabaseRejectsReaders() = runTest {
         assertFailsWith<IllegalArgumentException> { createDriver(":memory:", null, readers = 1) }
     }
+
+    @Test
+    fun testCloseSuspendingKeepsProcessAlive() = runInFreshProcess("testCloseSuspendingKeepsProcessAlive") {
+        dbFiles.forEach(::deleteIfExists)
+        try {
+            val driver = createDriver(dbName, Database.Schema, readers = 2)
+            Database(driver).testDataBaseDontUseQueries.insertFullPlayerObject(HockeyPlayer(8, "Teemu Selanne"))
+            driver.closeSuspending()
+            assertFalse(fileExists("$dbName-wal"))
+        } finally {
+            dbFiles.forEach(::deleteIfExists)
+        }
+    }
 }
