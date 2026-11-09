@@ -10,6 +10,7 @@ import cz.sazel.sqldelight.node.sqlite.InternalSQLiteDriverApi
 import cz.sazel.sqldelight.node.sqlite.SQLiteDriver
 import cz.sazel.sqldelight.node.sqlite.SQLiteException
 import cz.sazel.sqldelight.node.sqlite.SQLiteJsException
+import cz.sazel.sqldelight.node.sqlite.hasTopLevelLimit
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlin.random.Random
@@ -539,6 +540,40 @@ abstract class SQLiteDriverTest {
         } finally {
             listOf(file, "$file-wal", "$file-shm").forEach(::deleteIfExists)
         }
+    }
+
+    @Test
+    fun hasTopLevelLimit_detects_only_top_level_limit() {
+        assertTrue(hasTopLevelLimit("SELECT * FROM t LIMIT ?"))
+        assertTrue(hasTopLevelLimit("SELECT * FROM t LIMIT 10 OFFSET 20;"))
+        assertTrue(hasTopLevelLimit("SELECT * FROM t\nLIMIT ?,?"))
+        assertTrue(hasTopLevelLimit("WITH c AS (SELECT * FROM t) SELECT * FROM c LIMIT 5"))
+        assertTrue(hasTopLevelLimit("SELECT * FROM t LIMIT 5 -- trailing (comment)"))
+
+        assertFalse(hasTopLevelLimit("SELECT * FROM t"))
+        assertFalse(hasTopLevelLimit("SELECT * FROM t WHERE name = 'no limit here'"))
+        assertFalse(hasTopLevelLimit("SELECT * FROM t WHERE name = 'it''s a limit 5'"))
+        assertFalse(hasTopLevelLimit("SELECT \"limit 5\" FROM t"))
+        assertFalse(hasTopLevelLimit("SELECT * FROM t\n-- limit 5"))
+        assertFalse(hasTopLevelLimit("SELECT * FROM t /* limit 5 */"))
+        assertFalse(hasTopLevelLimit("SELECT * FROM t WHERE id IN (SELECT id FROM other LIMIT 5)"))
+        assertFalse(hasTopLevelLimit("WITH c AS (SELECT * FROM other LIMIT 5) SELECT * FROM c"))
+        assertFalse(hasTopLevelLimit("SELECT * FROM t LIMIT -1 OFFSET 10"))
+    }
+
+    @Test
+    fun executeQuery_with_non_reader_limit_statement() = runTest { driver ->
+        driver.execute(900, "INSERT INTO test VALUES (1, 'Alec');", 0).await()
+        driver.awaitQuery(
+            901,
+            "INSERT INTO test SELECT id + 10, value FROM test LIMIT 1",
+            { assertFalse(it.next().await()) },
+            0,
+        )
+        driver.awaitQuery(902, "SELECT count(*) FROM test", {
+            assertTrue(it.next().await())
+            assertEquals(2L, it.getLong(0))
+        }, 0)
     }
 }
 

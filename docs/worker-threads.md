@@ -37,5 +37,8 @@ WAL alone also made parallel autocommit writes few times faster there.
 
 ## Row batching
 
-Queries with a top-level `LIMIT` fetch the whole result in one worker message. Other queries stream rows in batches
-of `batchSize` (default `2048`), configurable on `initNodeSqliteSqlDriver` and `initBetterSqlite3SqlDriver`.
+Since 1.2.0.
+
+Queries with a top-level `LIMIT` fetch the whole result in one worker message (including `LIMIT ?`, so a huge bound
+value loads all those rows at once; `LIMIT -1` stays streamed). Other queries stream rows in batches of `batchSize`
+(default `2048`), configurable on `initNodeSqliteSqlDriver` and `initBetterSqlite3SqlDriver`.

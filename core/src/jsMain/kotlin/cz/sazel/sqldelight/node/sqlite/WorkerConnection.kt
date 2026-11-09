@@ -21,10 +21,23 @@ private const val OPEN_REQUEST_ID = 0
 private const val NO_REPLY = -1
 private const val STATEMENT_CACHE_SIZE = 32
 
-@InternalSQLiteDriverApi
+/**
+ * Default number of rows transferred per worker message for queries without `LIMIT`.
+ * @since 1.2.0
+ */
 const val DEFAULT_BATCH_SIZE = 2048
 
-private val limitClause = Regex("""\sLIMIT\s[^)]*$""", RegexOption.IGNORE_CASE)
+private val sqlLiteralOrComment =
+    Regex("""'(?:''|[^'])*'|"(?:""|[^"])*"|`[^`]*`|\[[^\]]*\]|--[^\r\n]*|/\*[\s\S]*?\*/""")
+private val limitClause = Regex("""\sLIMIT\s+(?!-\d)[^)]*$""", RegexOption.IGNORE_CASE)
+
+/**
+ * True when [sql] ends with a top-level `LIMIT` clause (not inside a subquery, CTE, string literal, or comment,
+ * and not `LIMIT -1`).
+ */
+@InternalSQLiteDriverApi
+fun hasTopLevelLimit(sql: String): Boolean =
+    limitClause.containsMatchIn(sql.replace(sqlLiteralOrComment, " "))
 
 /**
  * Opens a connection in its own worker thread. The thread imports [registrarModule], which registers
@@ -79,7 +92,6 @@ suspend fun openWorkerDriver(
     require(readers == 0 || !filename.isInMemory()) {
         "readers need a database file, in-memory databases are separate per connection"
     }
-    require(batchSize > 0) { "batchSize must be positive" }
     val writer = openWorkerConnection(taskName, registrarModule, filename, batchSize)
     val opened = mutableListOf<SQLiteConnection>()
     try {
@@ -347,7 +359,7 @@ private class WorkerSQLiteStatement(
     private val sql: String,
     private val batchSize: Int,
 ) : SQLiteStatement {
-    private val fetchAll = limitClause.containsMatchIn(sql)
+    private val fetchAll = hasTopLevelLimit(sql)
     private var prepared = false
     private var sent = false
     private var parameters: Array<Any?>? = null
