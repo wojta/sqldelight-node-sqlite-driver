@@ -25,6 +25,7 @@ internal external interface BetterSqlite3Statement {
     val reader: Boolean
 
     fun run(vararg parameters: Any?): RunResult
+    fun all(vararg parameters: Any?): Array<Array<dynamic>>
     fun iterate(vararg parameters: Any?): RowIterator
 
     /** Rows as arrays instead of objects, allowed only on readers. */

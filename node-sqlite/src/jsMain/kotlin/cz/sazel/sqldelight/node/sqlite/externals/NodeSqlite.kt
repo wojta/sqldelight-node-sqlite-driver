@@ -12,6 +12,7 @@ internal external object NodeSqlite {
 
     class StatementSync {
         fun run(vararg parameters: Any?): RunResult
+        fun all(vararg parameters: Any?): Array<Array<dynamic>>
         fun iterate(vararg parameters: Any?): RowIterator
         fun setReturnArrays(enabled: Boolean)
         fun setReadBigInts(enabled: Boolean)

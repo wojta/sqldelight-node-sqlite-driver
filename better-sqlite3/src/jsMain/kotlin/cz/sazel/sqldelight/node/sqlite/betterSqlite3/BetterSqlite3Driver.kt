@@ -3,6 +3,7 @@ package cz.sazel.sqldelight.node.sqlite.betterSqlite3
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlSchema
 import cloud.nst.worker.TaskRegistry
+import cz.sazel.sqldelight.node.sqlite.DEFAULT_BATCH_SIZE
 import cz.sazel.sqldelight.node.sqlite.InternalSQLiteDriverApi
 import cz.sazel.sqldelight.node.sqlite.SQLiteConnectionTask
 import cz.sazel.sqldelight.node.sqlite.SQLiteDriver
@@ -28,6 +29,7 @@ private val registration: Unit = TaskRegistry.register(TASK_NAME) {
  * @param beginImmediate start transactions with `BEGIN IMMEDIATE`
  * @param readers extra connections for `SELECT` queries outside transactions, each in its own worker thread, so
  * reads run in parallel; switches the database to WAL, needs a database file; since 1.1.0
+ * @param batchSize rows transferred per worker message for queries without `LIMIT`
  */
 @OptIn(InternalSQLiteDriverApi::class)
 suspend fun initBetterSqlite3SqlDriver(
@@ -35,4 +37,6 @@ suspend fun initBetterSqlite3SqlDriver(
     schema: SqlSchema<QueryResult.AsyncValue<Unit>>? = null,
     beginImmediate: Boolean = false,
     readers: Int = 0,
-): SQLiteDriver = openWorkerDriver(TASK_NAME, moduleUrl, filename, beginImmediate, readers).withSchema(schema)
+    batchSize: Int = DEFAULT_BATCH_SIZE,
+): SQLiteDriver =
+    openWorkerDriver(TASK_NAME, moduleUrl, filename, beginImmediate, readers, batchSize).withSchema(schema)

@@ -20,6 +20,10 @@ class NodeSqliteDriverWithLibraryTest : DriverWithLibraryTest() {
 }
 
 class NodeSqliteReaderPoolTest : ReaderPoolTest() {
-    override suspend fun createDriver(filename: String, schema: SqlSchema<QueryResult.AsyncValue<Unit>>?, readers: Int) =
-        initNodeSqliteSqlDriver(filename, schema = schema, readers = readers)
+    override suspend fun createDriver(
+        filename: String,
+        schema: SqlSchema<QueryResult.AsyncValue<Unit>>?,
+        readers: Int,
+        batchSize: Int,
+    ) = initNodeSqliteSqlDriver(filename, schema = schema, readers = readers, batchSize = batchSize)
 }

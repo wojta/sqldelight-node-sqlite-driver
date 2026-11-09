@@ -1,9 +1,13 @@
+@file:OptIn(InternalSQLiteDriverApi::class)
+
 package cz.sazel.sqldelight.node.sqlite.test
 
 import app.cash.sqldelight.async.coroutines.awaitAsList
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlSchema
 import cz.sazel.sqldelight.dontuse.HockeyPlayer
+import cz.sazel.sqldelight.node.sqlite.DEFAULT_BATCH_SIZE
+import cz.sazel.sqldelight.node.sqlite.InternalSQLiteDriverApi
 import cz.sazel.sqldelight.node.sqlite.SQLiteDriver
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -24,6 +28,7 @@ abstract class ReaderPoolTest {
         filename: String,
         schema: SqlSchema<QueryResult.AsyncValue<Unit>>?,
         readers: Int,
+        batchSize: Int = DEFAULT_BATCH_SIZE,
     ): SQLiteDriver
 
     private val dbName = "reader_pool_test.db"
@@ -112,6 +117,25 @@ abstract class ReaderPoolTest {
     @Test
     fun testInMemoryDatabaseRejectsReaders() = runTest {
         assertFailsWith<IllegalArgumentException> { createDriver(":memory:", null, readers = 1) }
+    }
+
+    @Test
+    fun testNonPositiveBatchSizeRejected() = runTest {
+        assertFailsWith<IllegalArgumentException> { createDriver(":memory:", null, readers = 0, batchSize = 0) }
+    }
+
+    @Test
+    fun testCustomBatchSize() = runTest {
+        val driver = createDriver(":memory:", Database.Schema, readers = 0, batchSize = 4)
+        try {
+            val database = Database(driver)
+            database.transaction {
+                players(100, 10).forEach { database.testDataBaseDontUseQueries.insertFullPlayerObject(it) }
+            }
+            assertEquals(11, database.testDataBaseDontUseQueries.selectAll().awaitAsList().size)
+        } finally {
+            driver.closeSuspending()
+        }
     }
 
     @Test

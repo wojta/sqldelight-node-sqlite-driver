@@ -34,3 +34,8 @@ val driver = initNodeSqliteSqlDriver(filename = "test.db", schema = Database.Sch
 It helps only when many coroutines query at once. In the project benchmark 2 readers gave 15–55 % more indexed lookups
 per second with 4–16 coroutines, after that the main thread was the limit, so more than 2 or 3 readers rarely pays off.
 WAL alone also made parallel autocommit writes few times faster there.
+
+## Row batching
+
+Queries with a top-level `LIMIT` fetch the whole result in one worker message. Other queries stream rows in batches
+of `batchSize` (default `2048`), configurable on `initNodeSqliteSqlDriver` and `initBetterSqlite3SqlDriver`.
