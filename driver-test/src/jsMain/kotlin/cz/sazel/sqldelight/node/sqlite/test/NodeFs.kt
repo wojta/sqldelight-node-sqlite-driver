@@ -43,12 +43,18 @@ fun deleteIfExists(path: String) {
 
 fun fileExists(path: String): Boolean = NodeFs.existsSync(path)
 
+private const val CHILD_TIMEOUT_MS = 60_000
+
 /**
  * Mocha's test timeout timer holds the event loop, so a missing ref in the driver only shows up
  * in child process with no test runner around it.
  */
-fun runInFreshProcess(testName: String, block: suspend () -> Unit) {
-    if (nodeProcess.env.FRESH_PROCESS_TEST.unsafeCast<String?>() == testName) {
+fun Any.runInFreshProcess(testName: String, block: suspend () -> Unit) {
+    val suiteName = this::class.simpleName ?: error("Missing test class name")
+    if (
+        nodeProcess.env.FRESH_PROCESS_SUITE.unsafeCast<String?>() == suiteName &&
+        nodeProcess.env.FRESH_PROCESS_TEST.unsafeCast<String?>() == testName
+    ) {
         var finished = false
         nodeProcess.on("exit") { code ->
             if (code == 0 && !finished) nodeProcess.exitCode = 2
@@ -67,20 +73,33 @@ fun runInFreshProcess(testName: String, block: suspend () -> Unit) {
     val main = JSON.parse<dynamic>(NodeFs.readFileSync("package.json", "utf8")).main.unsafeCast<String>()
     val testModule = NodeUrl.pathToFileURL(main).href
     val script = """
+        const suite = process.env.FRESH_PROCESS_SUITE;
         const target = process.env.FRESH_PROCESS_TEST;
-        globalThis.describe = (_, fn) => fn();
+        let currentSuite = '';
+        globalThis.describe = (name, fn) => {
+            const prev = currentSuite;
+            currentSuite = name;
+            fn();
+            currentSuite = prev;
+        };
         globalThis.xdescribe = () => {};
-        globalThis.it = (name, fn) => { if (name === target) fn(); };
+        globalThis.it = (name, fn) => { if (currentSuite === suite && name === target) fn(); };
         globalThis.xit = () => {};
         import(process.env.FRESH_PROCESS_MODULE);
     """.trimIndent()
     val env = js("Object.assign({}, process.env)")
+    env.FRESH_PROCESS_SUITE = suiteName
     env.FRESH_PROCESS_TEST = testName
     env.FRESH_PROCESS_MODULE = testModule
     val child = ChildProcess.spawnSync(
         nodeProcess.execPath,
         arrayOf("-e", script),
-        json("env" to env, "stdio" to "inherit"),
+        json("env" to env, "stdio" to "inherit", "timeout" to CHILD_TIMEOUT_MS),
     )
-    assertEquals(0, child.status.unsafeCast<Int?>(), "$testName exited before finishing (status ${child.status})")
+    assertEquals(
+        0,
+        child.status.unsafeCast<Int?>(),
+        "$suiteName.$testName exited before finishing " +
+            "(status=${child.status}, signal=${child.signal}, error=${child.error})",
+    )
 }
