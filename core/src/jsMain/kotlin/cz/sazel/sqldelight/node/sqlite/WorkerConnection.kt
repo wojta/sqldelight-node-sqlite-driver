@@ -286,9 +286,19 @@ private class WorkerSQLiteConnection(
     }
 
     override suspend fun close() {
-        request("close")
-        ticket.await()
-        shutdown()
+        // close reply unrefs the port before the worker finishes a task, hold the loop until shutdown
+        pool.ref()
+        try {
+            request("close")
+        } catch (@Suppress("TooGenericExceptionCaught") e: Throwable) {
+            pool.unref()
+            throw e
+        }
+        try {
+            ticket.await()
+        } finally {
+            shutdown()
+        }
     }
 
     fun shutdown() {

@@ -527,6 +527,19 @@ abstract class SQLiteDriverTest {
             listOf(file, "$file-wal", "$file-shm").forEach(::deleteIfExists)
         }
     }
+
+    @Test
+    fun closeSuspending_keeps_process_alive() = runInFreshProcess("closeSuspending_keeps_process_alive") {
+        val file = "close-alive-test.db"
+        listOf(file, "$file-wal", "$file-shm").forEach(::deleteIfExists)
+        try {
+            val driver = createDriver(file, schema = schema)
+            driver.execute(null, "INSERT INTO test VALUES (1, 'a')", 0).await()
+            driver.closeSuspending()
+        } finally {
+            listOf(file, "$file-wal", "$file-shm").forEach(::deleteIfExists)
+        }
+    }
 }
 
 @Suppress("UnusedParameter")
