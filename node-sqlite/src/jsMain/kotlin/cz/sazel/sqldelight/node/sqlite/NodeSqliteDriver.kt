@@ -24,7 +24,7 @@ private val registration: Unit = TaskRegistry.register(TASK_NAME) {
  * @param readers extra connections for `SELECT` queries outside transactions, each in its own worker thread, so
  * reads run in parallel; switches the database to WAL, needs a database file; since 1.1.0
  * @param batchSize rows transferred per worker message for queries without `LIMIT`, default `2048`
- * ([DEFAULT_BATCH_SIZE]); since 1.2.0
+ * ([DEFAULT_BATCH_SIZE]); since 1.1.1
  */
 @OptIn(InternalSQLiteDriverApi::class)
 suspend fun initNodeSqliteSqlDriver(

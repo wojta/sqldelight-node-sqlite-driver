@@ -37,7 +37,7 @@ WAL alone also made parallel autocommit writes few times faster there.
 
 ## Row batching
 
-Since 1.2.0.
+Since 1.1.1.
 
 Queries with a top-level `LIMIT` fetch the whole result in one worker message (including `LIMIT ?`, so a huge bound
 value loads all those rows at once; `LIMIT -1` stays streamed). Other queries stream rows in batches of `batchSize`

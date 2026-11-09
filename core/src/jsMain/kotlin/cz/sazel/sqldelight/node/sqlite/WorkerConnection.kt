@@ -23,7 +23,7 @@ private const val STATEMENT_CACHE_SIZE = 32
 
 /**
  * Default number of rows transferred per worker message for queries without `LIMIT`.
- * @since 1.2.0
+ * @since 1.1.1
  */
 const val DEFAULT_BATCH_SIZE = 2048
 
